@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import io, base64
 
 import streamlit as st
 import torch
@@ -7,114 +8,140 @@ import torch.nn as nn
 from torchvision import models, transforms
 from torchvision.models import ResNet50_Weights, EfficientNet_B0_Weights
 from PIL import Image
-import numpy as np
-import matplotlib.pyplot as plt
 
 
 st.set_page_config(
-    page_title="PokéClassifier",
-    page_icon="⚡",
+    page_title="Pokédex AI",
+    page_icon="🔮",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
-html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: #0d0f14; color: #e8eaf0; }
-.stApp { background: #0d0f14; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-[data-testid="stSidebar"] { background: #13151c !important; border-right: 1px solid #1e2130; }
-[data-testid="stSidebar"] .stMarkdown h1,
-[data-testid="stSidebar"] .stMarkdown h2,
-[data-testid="stSidebar"] .stMarkdown h3 { color: #ffcb05 !important; }
-
-.card {
-    background: #161921; border: 1px solid #1e2130;
-    border-radius: 14px; padding: 24px 28px; margin-bottom: 18px;
-}
-.card-highlight {
-    background: linear-gradient(135deg, #1a1d2e 0%, #161921 100%);
-    border: 1px solid #2e3251; border-radius: 14px; padding: 24px 28px; margin-bottom: 18px;
+html, body, [class*="css"], .stApp {
+    background: #F5F5FF;
+    color: #1A1A2E;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
 }
 
-.hero-title {
-    font-family: 'Syne', sans-serif; font-size: 3rem; font-weight: 800;
-    letter-spacing: -1px;
-    background: linear-gradient(135deg, #ffcb05 30%, #ff6b35 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    line-height: 1.1; margin: 0;
-}
-.hero-sub {
-    color: #6b7394; font-size: 0.95rem; font-family: 'Space Mono', monospace;
-    margin-top: 6px; letter-spacing: 0.05em;
-}
-.pred-rank { font-family: 'Space Mono', monospace; font-size: 0.7rem; color: #6b7394; text-transform: uppercase; letter-spacing: 0.1em; }
-.pred-name { font-size: 1.5rem; font-weight: 800; color: #ffcb05; margin: 2px 0 6px; }
-.pred-conf { font-family: 'Space Mono', monospace; font-size: 1rem; color: #e8eaf0; }
+/* ── hide streamlit chrome (흰색 박스 포함) ── */
+#MainMenu, footer, header { visibility: hidden; }
+[data-testid="collapsedControl"] { display: none; }
+[data-testid="stHeader"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+[data-testid="stToolbar"] { display: none !important; }
 
-.stProgress > div > div > div { background: linear-gradient(90deg, #ffcb05, #ff6b35) !important; border-radius: 99px; }
+.block-container { padding: 2rem 4% !important; max-width: 1280px !important; margin: 0 auto; }
 
-[data-testid="metric-container"] { background: #161921; border: 1px solid #1e2130; border-radius: 10px; padding: 14px 20px; }
-[data-testid="stMetricValue"] { color: #ffcb05 !important; font-family: 'Space Mono', monospace; font-size: 1.6rem !important; }
-[data-testid="stMetricLabel"] { color: #6b7394 !important; font-size: 0.78rem !important; text-transform: uppercase; letter-spacing: 0.08em; }
+/* ── NAV ── */
+.nav-bar { display:flex; align-items:center; margin-bottom:2rem; }
+.nav-logo-text { font-weight:900; font-size:1.45rem; color:#4F46E5; letter-spacing:-0.03em; }
 
-.stSelectbox label, .stSlider label, .stFileUploader label {
-    color: #9aa0bc !important; font-size: 0.82rem !important;
-    text-transform: uppercase; letter-spacing: 0.07em; font-family: 'Space Mono', monospace;
+/* ── LEFT ── */
+.eyebrow { font-size:0.75rem; font-weight:700; color:#4F46E5;
+    letter-spacing:0.08em; text-transform:uppercase; margin-bottom:10px; }
+.headline { font-size:clamp(2rem,3vw,2.9rem); font-weight:900; line-height:1.22;
+    color:#1A1A2E; margin-bottom:16px; letter-spacing:-0.03em; word-break:keep-all; }
+.headline span { color:#4F46E5; }
+.desc { font-size:0.93rem; line-height:1.7; color:#6B7280; margin-bottom:32px; word-break:keep-all; }
+.field-label { font-size:0.8rem; font-weight:700; color:#374151; margin-bottom:10px; }
+.divider { width:100%; height:1px; background:#F0F0FF; margin:24px 0; }
+.meta-tag { display:inline-flex; align-items:center; gap:6px; margin-top:32px;
+    font-size:0.76rem; color:#9CA3AF; font-weight:500; }
+.meta-dot { width:6px; height:6px; border-radius:50%; background:#A5B4FC; display:inline-block; }
+
+/* ── RADIO ── */
+[data-testid="stRadio"] [data-testid="stWidgetLabel"] { display:none !important; }
+
+[data-testid="stRadio"] [role="radiogroup"] {
+    display:grid !important;
+    grid-template-columns:1fr 1fr !important;
+    gap:8px !important;
 }
-.stButton > button {
-    background: linear-gradient(135deg, #ffcb05, #ff8c35); color: #0d0f14;
-    font-weight: 700; font-family: 'Syne', sans-serif; border: none;
-    border-radius: 8px; padding: 10px 28px; font-size: 0.95rem; transition: opacity 0.2s;
+[data-testid="stRadio"] [role="radiogroup"] label {
+    background:#F9F9FF !important; border:1.5px solid #E0E0FF !important;
+    border-radius:12px !important; padding:10px 14px !important;
+    cursor:pointer !important; transition:all .15s !important;
+    display:flex !important; align-items:center !important;
+    justify-content:center !important;
 }
-.stButton > button:hover { opacity: 0.85; }
+[data-testid="stRadio"] [role="radiogroup"] label:hover {
+    border-color:#4F46E5 !important; background:#EEF2FF !important; }
+[data-testid="stRadio"] [role="radiogroup"] label > div:first-child { display:none !important; }
+[data-testid="stRadio"] [role="radiogroup"] label p {
+    font-size:0.79rem !important; font-weight:600 !important;
+    color:#6B7280 !important; margin:0 !important; text-align:center !important; }
+[data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {
+    background:#EEF2FF !important; border-color:#4F46E5 !important; }
+[data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) p { color:#4F46E5 !important; }
+[data-testid="stRadio"] [role="radiogroup"] label input { display:none !important; }
 
-.stTabs [data-baseweb="tab"] { font-family: 'Space Mono', monospace; color: #6b7394; font-size: 0.82rem; letter-spacing: 0.05em; text-transform: uppercase; }
-.stTabs [aria-selected="true"] { color: #ffcb05 !important; border-bottom: 2px solid #ffcb05 !important; }
-
-hr { border-color: #1e2130 !important; }
-details summary { color: #9aa0bc !important; font-family: 'Space Mono', monospace; font-size: 0.82rem; }
-.stImage img { border-radius: 12px; }
-
-.exp-badge {
-    display: inline-block; background: #1e2130; color: #ffcb05;
-    font-family: 'Space Mono', monospace; font-size: 0.7rem;
-    padding: 3px 10px; border-radius: 99px; letter-spacing: 0.08em;
-    border: 1px solid #2e3251; margin-right: 6px; margin-bottom: 4px;
+/* ── FILE UPLOADER ── */
+[data-testid="stFileUploader"] { background:transparent !important; }
+[data-testid="stFileUploader"] > div {
+    background:#F5F5FF !important; border:2px dashed #C7D2FE !important;
+    border-radius:14px !important; padding:26px 20px !important; transition:all .2s;
 }
-.best-badge {
-    display: inline-block;
-    background: linear-gradient(135deg, #ffcb05, #ff8c35);
-    color: #0d0f14; font-family: 'Space Mono', monospace; font-size: 0.7rem;
-    padding: 3px 10px; border-radius: 99px; font-weight: 700; letter-spacing: 0.05em;
-}
+[data-testid="stFileUploader"] > div:hover { border-color:#4F46E5 !important; background:#EEF2FF !important; }
+[data-testid="stFileUploader"] label { display:none !important; }
+[data-testid="stFileDropzoneInstructions"] { color:#6366F1 !important; font-size:0.87rem !important; font-weight:600 !important; }
+
+/* ── RIGHT / RESULT ── */
+.panel-title { font-size:0.97rem; font-weight:800; color:#1A1A2E; margin-bottom:24px; }
+.empty-box { display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:12px; background:#F9F9FF; border:2px solid #C7D2FE; border-radius:20px;
+    padding:72px 24px; min-height:500px; }
+.empty-text { font-size:0.9rem; color:#9CA3AF; font-weight:500; }
+
+/* ── RESULT CARD ── */
+.result-card { background:#FAFAFE; border:1px solid #E8E8FF; border-radius:20px; overflow:hidden; }
+
+/* 이미지: 카드 상단 전체 폭 */
+.rc-img-wrap { width 100%; height:350px; }
+.rc-img-wrap img { width:100%; height:100%; object-fit:cover; display:block; }
+
+/* 이미지 아래 본문 */
+.rc-body { padding:18px 22px 22px; }
+
+/* 한 줄 정보 */
+.rc-info-row { display:flex; align-items:baseline; gap:8px; margin-bottom:18px; }
+.rc-subtitle { font-size:0.75rem; color:#9CA3AF; font-weight:500; white-space:nowrap; }
+.rc-name { font-size:1.2rem; font-weight:900; color:#4F46E5; letter-spacing:-0.02em; }
+.rc-spacer { flex:1; min-width:12px; }
+.rc-match-label { font-size:0.75rem; color:#9CA3AF; font-weight:500; white-space:nowrap; }
+.rc-match-pct { font-size:1.2rem; font-weight:900; color:#1A1A2E; letter-spacing:-0.03em; white-space:nowrap; }
+.rc-match-pct span { font-size:0.82rem; font-weight:700; color:#6B7280; }
+
+.bar-list { display:flex; flex-direction:column; gap:9px; }
+.bar-row { display:grid; grid-template-columns:100px 1fr 34px; align-items:center; gap:9px; }
+.bar-label { font-size:0.8rem; font-weight:600; color:#6B7280;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bar-label.hi { color:#1A1A2E; font-weight:800; }
+.bar-track { height:9px; background:#EBEBFF; border-radius:99px; overflow:hidden; position:relative; }
+.bar-fill { position:absolute; top:0; left:0; height:100%; border-radius:99px; background:#4F46E5; }
+.bar-fill.lo { background:#A5B4FC; }
+.bar-pct { font-size:0.78rem; font-weight:700; color:#9CA3AF; text-align:right; }
+.bar-pct.hi { color:#4F46E5; }
+
+div[data-testid="stSpinner"] > div { border-top-color:#4F46E5 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
 IMG_SIZE        = 224
 EXPERIMENTS_DIR = Path("./experiments")
-TOP_K_DEFAULT   = 5
 
 EXPERIMENT_META = {
-    "exp1_resnet50_pretrained_headonly": {
-        "label": "EXP 1", "name": "ResNet-50 · Pretrained · Head Only",
-        "backbone": "resnet50", "pretrained": True, "color": "#3b82f6",
-    },
-    "exp2_resnet50_pretrained_fulltune": {
-        "label": "EXP 2", "name": "ResNet-50 · Pretrained · Full Fine-Tune",
-        "backbone": "resnet50", "pretrained": True, "color": "#22c55e",
-    },
-    "exp3_efficientnet_pretrained_headonly": {
-        "label": "EXP 3", "name": "EfficientNet-B0 · Pretrained · Head Only",
-        "backbone": "efficientnet_b0", "pretrained": True, "color": "#a855f7",
-    },
-    "exp4_resnet50_scratch_fulltrain": {
-        "label": "EXP 4", "name": "ResNet-50 · Scratch · Full Train",
-        "backbone": "resnet50", "pretrained": False, "color": "#ef4444",
-    },
+    "exp1_resnet50_pretrained_headonly":     "ResNet-50\nHead Only",
+    "exp2_resnet50_pretrained_fulltune":     "ResNet-50\nFull Tune",
+    "exp3_efficientnet_pretrained_headonly": "EfficientNet\nHead Only",
+    "exp4_resnet50_scratch_fulltrain":       "ResNet-50\nScratch",
 }
 
 TRANSFORM = transforms.Compose([
@@ -122,29 +149,6 @@ TRANSFORM = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
 ])
-
-
-@st.cache_resource(show_spinner=False)
-def load_model(exp_name, num_classes):
-    meta    = EXPERIMENT_META[exp_name]
-    device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    if meta["backbone"] == "resnet50":
-        weights = ResNet50_Weights.DEFAULT if meta["pretrained"] else None
-        model   = models.resnet50(weights=weights)
-        model.fc = nn.Sequential(nn.Dropout(0.4), nn.Linear(model.fc.in_features, num_classes))
-    else:
-        weights = EfficientNet_B0_Weights.DEFAULT if meta["pretrained"] else None
-        model   = models.efficientnet_b0(weights=weights)
-        model.classifier = nn.Sequential(nn.Dropout(0.4), nn.Linear(model.classifier[1].in_features, num_classes))
-
-    weight_path = EXPERIMENTS_DIR / exp_name / "best_model.pth"
-    if weight_path.exists():
-        model.load_state_dict(torch.load(weight_path, map_location=device))
-    else:
-        st.warning(f"⚠️ Weights not found: {weight_path}")
-
-    return model.to(device).eval(), device
 
 
 @st.cache_data(show_spinner=False)
@@ -155,256 +159,127 @@ def load_classes():
     return [f"Pokemon_{i}" for i in range(150)]
 
 
-@st.cache_data(show_spinner=False)
-def load_all_results():
-    path = EXPERIMENTS_DIR / "all_results.json"
-    if path.exists():
-        return json.loads(path.read_text())
-    return {}
+@st.cache_resource(show_spinner=False)
+def load_model(exp_name, num_classes):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if "efficientnet" in exp_name:
+        weights = EfficientNet_B0_Weights.DEFAULT if "scratch" not in exp_name else None
+        model   = models.efficientnet_b0(weights=weights)
+        model.classifier = nn.Sequential(nn.Dropout(0.4), nn.Linear(model.classifier[1].in_features, num_classes))
+    else:
+        weights = ResNet50_Weights.DEFAULT if "scratch" not in exp_name else None
+        model   = models.resnet50(weights=weights)
+        model.fc = nn.Sequential(nn.Dropout(0.4), nn.Linear(model.fc.in_features, num_classes))
+    weight_path = EXPERIMENTS_DIR / exp_name / "best_model.pth"
+    if weight_path.exists():
+        model.load_state_dict(torch.load(weight_path, map_location=device))
+    return model.to(device).eval(), device
 
 
 @torch.no_grad()
-def predict(model, image, device, classes, top_k):
+def predict(model, image, device, classes, top_k=5):
     tensor = TRANSFORM(image.convert("RGB")).unsqueeze(0).to(device)
     probs  = torch.softmax(model(tensor), dim=1)[0]
     top_probs, top_idx = probs.topk(top_k)
     return [(classes[i], float(p)) for i, p in zip(top_idx, top_probs)]
 
 
-with st.sidebar:
-    st.markdown("## ⚡ PokéClassifier")
-    st.markdown("**HW #6 · Computer Vision**  \nSEOULTECH · Transfer Learning")
-    st.divider()
+classes     = load_classes()
+num_classes = len(classes)
+exp_keys    = list(EXPERIMENT_META.keys())
+exp_labels  = list(EXPERIMENT_META.values())
 
-    classes     = load_classes()
-    num_classes = len(classes)
-    st.markdown(f"<span class='exp-badge'>🎯 {num_classes} Classes</span>", unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
+# ── NAV ────────────────────────────────
+st.markdown(
+    '<div class="nav-bar">'
+    '<div class="nav-logo-text">AI POKÉDEX</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
-    st.markdown("### Select Model")
-    exp_options = list(EXPERIMENT_META.keys())
-    exp_labels  = [f"{EXPERIMENT_META[e]['label']} — {EXPERIMENT_META[e]['name']}" for e in exp_options]
-    selected_idx = st.selectbox("Experiment", range(len(exp_options)),
-                                 format_func=lambda i: exp_labels[i], label_visibility="collapsed")
-    selected_exp = exp_options[selected_idx]
+col_left, col_gap, col_right = st.columns([1, 0.04, 1.15])
 
-    st.divider()
-    st.markdown("### Top-K Predictions")
-    top_k = st.slider("K", 1, 10, TOP_K_DEFAULT, label_visibility="collapsed")
+# ══════════════ LEFT ══════════════
+with col_left:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
 
-    st.divider()
-    meta = EXPERIMENT_META[selected_exp]
-    st.markdown(f"""
-    <div class="card">
-      <div class="pred-rank">Current Model</div>
-      <div style="font-size:1rem;font-weight:700;color:#e8eaf0;margin:4px 0 10px;">{meta['name']}</div>
-      <span class="exp-badge">{'PRETRAINED' if meta['pretrained'] else 'FROM SCRATCH'}</span>
-      <span class="exp-badge">{meta['backbone'].upper()}</span>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="eyebrow">포켓몬 이미지 분석</div>'
+        '<div class="headline">이 포켓몬은<br><span>누구일까요?</span></div>'
+        '<div class="desc">AI 모델이 사진을 분석해 어떤 포켓몬인지 알려드립니다.<br>'
+        '이미지를 업로드하고 결과를 확인해 보세요.</div>',
+        unsafe_allow_html=True,
+    )
 
+    st.markdown('<div class="field-label">분석 모델</div>', unsafe_allow_html=True)
+    selected_label = st.radio(
+        "model",
+        options=exp_labels,
+        label_visibility="collapsed",
+    )
+    selected_exp = exp_keys[exp_labels.index(selected_label)]
 
-tab_classify, tab_compare, tab_curves = st.tabs([
-    "⚡  CLASSIFY",
-    "📊  EXPERIMENT COMPARISON",
-    "📈  LEARNING CURVES",
-])
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-label">이미지 업로드</div>', unsafe_allow_html=True)
 
-
-with tab_classify:
-    st.markdown('<p class="hero-title">PokéClassifier</p>', unsafe_allow_html=True)
-    st.markdown('<p class="hero-sub">TRANSFER LEARNING · SEOULTECH · HW #6</p>', unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    col_upload, col_result = st.columns([1, 1], gap="large")
-
-    with col_upload:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        uploaded = st.file_uploader("Upload Pokémon Image", type=["jpg", "jpeg", "png", "webp"])
-        if uploaded:
-            img = Image.open(uploaded)
-            st.image(img, use_column_width=True, caption="Uploaded Image")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_result:
-        if uploaded:
-            with st.spinner("Analyzing..."):
-                model, device = load_model(selected_exp, num_classes)
-                preds = predict(model, img, device, classes, top_k=top_k)
-
-            top_name, top_conf = preds[0]
-            st.markdown(f"""
-            <div class="card-highlight">
-              <div class="pred-rank">Top Prediction</div>
-              <div class="pred-name">#{top_name.replace('_', ' ').title()}</div>
-              <div class="pred-conf">{top_conf*100:.2f}% confidence</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown(f"**Top-{top_k} Predictions**")
-            for i, (name, conf) in enumerate(preds):
-                rank_color = "#ffcb05" if i == 0 else "#9aa0bc"
-                label_col, bar_col, pct_col = st.columns([3, 5, 1])
-                with label_col:
-                    st.markdown(
-                        f"<span style='color:{rank_color};font-family:Space Mono,monospace;font-size:0.82rem;'>"
-                        f"{'⭐' if i==0 else f'{i+1}.'} {name.replace('_',' ').title()}</span>",
-                        unsafe_allow_html=True
-                    )
-                with bar_col:
-                    st.progress(float(conf))
-                with pct_col:
-                    st.markdown(
-                        f"<span style='font-family:Space Mono,monospace;font-size:0.78rem;color:#6b7394;'>"
-                        f"{conf*100:.1f}%</span>",
-                        unsafe_allow_html=True
-                    )
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div class="card" style="text-align:center;padding:60px 20px;opacity:0.5;">
-              <div style="font-size:3rem;margin-bottom:12px;">🎯</div>
-              <div style="font-family:'Space Mono',monospace;font-size:0.82rem;color:#6b7394;">
-                UPLOAD AN IMAGE TO CLASSIFY
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+    uploaded = st.file_uploader(
+        "upload", type=["jpg", "jpeg", "png", "webp"],
+        label_visibility="collapsed",
+    )
 
 
-with tab_compare:
-    st.markdown("## Experiment Comparison")
-    all_results = load_all_results()
+# ══════════════ RIGHT ══════════════
+with col_right:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="panel-title">분석 결과</div>', unsafe_allow_html=True)
 
-    if not all_results:
-        st.info("🔬 No results found. Run `train.py` first.")
+    if not uploaded:
+        st.markdown(
+            '<div class="empty-box">'
+            '<div class="empty-text">이미지를 업로드하면 결과가 여기에 표시됩니다</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     else:
-        metrics       = ["test_accuracy", "test_precision", "test_recall", "test_f1"]
-        metric_labels = ["Accuracy", "Precision", "Recall", "F1 Score"]
-        best_exp      = max(all_results.items(), key=lambda x: x[1].get("test_accuracy", 0))[0]
-        best          = all_results[best_exp]
+        img = Image.open(uploaded)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
 
-        st.markdown("### 🏆 Best Model")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Accuracy",  f"{best['test_accuracy']:.4f}")
-        c2.metric("Precision", f"{best['test_precision']:.4f}")
-        c3.metric("Recall",    f"{best['test_recall']:.4f}")
-        c4.metric("F1 Score",  f"{best['test_f1']:.4f}")
-        st.markdown(f"""
-        <div style="margin:6px 0 24px;">
-          <span class="best-badge">BEST</span>
-          <span style="color:#9aa0bc;font-size:0.85rem;margin-left:8px;">
-            {EXPERIMENT_META.get(best_exp, {}).get('name', best_exp)}
-          </span>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.spinner("분석 중..."):
+            model, device = load_model(selected_exp, num_classes)
+            preds = predict(model, img, device, classes, top_k=5)
 
-        st.markdown("### Performance Comparison")
-        fig, ax = plt.subplots(figsize=(11, 4))
-        fig.patch.set_facecolor('#161921')
-        ax.set_facecolor('#161921')
+        top_name, top_conf = preds[0]
+        top_display = top_name.replace("_", " ").title()
 
-        exp_names     = list(all_results.keys())
-        x             = np.arange(len(exp_names))
-        width         = 0.2
-        metric_colors = ["#ffcb05", "#22c55e", "#3b82f6", "#a855f7"]
+        bar_html = "".join(
+            '<div class="bar-row">'
+            f'<div class="{"bar-label hi" if i == 0 else "bar-label"}">{name.replace("_", " ").title()}</div>'
+            f'<div class="bar-track"><div class="{"bar-fill" if i == 0 else "bar-fill lo"}" style="width:{conf*100:.1f}%"></div></div>'
+            f'<div class="{"bar-pct hi" if i == 0 else "bar-pct"}">{int(conf*100)}%</div>'
+            '</div>'
+            for i, (name, conf) in enumerate(preds)
+        )
 
-        for j, (metric, label, color) in enumerate(zip(metrics, metric_labels, metric_colors)):
-            vals = [all_results[e].get(metric, 0) for e in exp_names]
-            bars = ax.bar(x + j * width - 1.5 * width, vals, width, label=label, color=color, alpha=0.85, zorder=3)
-            for bar in bars:
-                h = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width() / 2, h + 0.005,
-                        f"{h:.3f}", ha='center', va='bottom', color='#e8eaf0', fontsize=6.5, fontfamily='monospace')
+        card_html = (
+            '<div class="result-card">'
+            # 이미지: 카드 상단 전체 폭
+            f'<div class="rc-img-wrap"><img src="data:image/png;base64,{b64}"/></div>'
+            '<div class="rc-body">'
+            # 한 줄: 분석된 포켓몬 | 이름 · · · 일치도 | 72%
+            '<div class="rc-info-row">'
+            '<span class="rc-subtitle">분석된 포켓몬</span>'
+            f'<span class="rc-name">{top_display}</span>'
+            '<span class="rc-spacer"></span>'
+            '<span class="rc-match-label">일치도</span>'
+            f'<span class="rc-match-pct">{int(top_conf*100)}<span>%</span></span>'
+            '</div>'
+            # 바 차트
+            f'<div class="bar-list">{bar_html}</div>'
+            '</div>'
+            '</div>'
+        )
+        st.markdown(card_html, unsafe_allow_html=True)
 
-        ax.set_xticks(x)
-        ax.set_xticklabels([EXPERIMENT_META.get(e, {}).get('label', e) for e in exp_names], color='#9aa0bc', fontsize=9)
-        ax.set_ylim(0, 1.12)
-        ax.set_ylabel("Score", color='#6b7394', fontsize=9)
-        ax.tick_params(colors='#6b7394')
-        ax.spines[['right', 'top', 'bottom', 'left']].set_color('#1e2130')
-        ax.grid(axis='y', color='#1e2130', linewidth=0.8, zorder=0)
-        ax.legend(loc='upper right', framealpha=0, labelcolor='#9aa0bc', fontsize=8.5)
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close()
-
-        st.markdown("### Detailed Results")
-        for exp_name, result in all_results.items():
-            meta_info = EXPERIMENT_META.get(exp_name, {})
-            is_best   = (exp_name == best_exp)
-            with st.expander(
-                f"{'🏆 ' if is_best else ''}{meta_info.get('label','?')} — {meta_info.get('name', exp_name)}",
-                expanded=is_best
-            ):
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Accuracy",  f"{result['test_accuracy']:.4f}")
-                c2.metric("Precision", f"{result['test_precision']:.4f}")
-                c3.metric("Recall",    f"{result['test_recall']:.4f}")
-                c4.metric("F1",        f"{result['test_f1']:.4f}")
-                st.markdown(f"""
-                <div style="margin-top:10px;">
-                  <span class="exp-badge">{result.get('backbone','').upper()}</span>
-                  <span class="exp-badge">{'PRETRAINED' if result.get('pretrained') else 'SCRATCH'}</span>
-                  <span class="exp-badge">{'HEAD ONLY' if result.get('freeze_backbone') else 'FULL TUNE'}</span>
-                  <span class="exp-badge">⏱ {result.get('training_time_sec', 0)/60:.1f} min</span>
-                </div>
-                """, unsafe_allow_html=True)
-
-
-with tab_curves:
-    st.markdown("## Learning Curves")
-    all_results = load_all_results()
-
-    if not all_results:
-        st.info("🔬 No results found. Run `train.py` first.")
-    else:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-        fig.patch.set_facecolor('#161921')
-        for ax in axes:
-            ax.set_facecolor('#161921')
-            ax.spines[['right', 'top', 'bottom', 'left']].set_color('#1e2130')
-            ax.tick_params(colors='#6b7394')
-            ax.grid(color='#1e2130', linewidth=0.8)
-
-        exp_colors = ["#3b82f6", "#22c55e", "#a855f7", "#ef4444"]
-        for idx, (exp_name, result) in enumerate(all_results.items()):
-            hist = result.get('history', {})
-            if not hist:
-                continue
-            color  = exp_colors[idx % len(exp_colors)]
-            label  = EXPERIMENT_META.get(exp_name, {}).get('label', exp_name)
-            epochs = range(1, len(hist['train_loss']) + 1)
-            axes[0].plot(epochs, hist['val_loss'],  label=label, color=color, lw=2)
-            axes[0].plot(epochs, hist['train_loss'], color=color, lw=1, linestyle='--', alpha=0.4)
-            axes[1].plot(epochs, hist['val_acc'],   label=label, color=color, lw=2)
-            axes[1].plot(epochs, hist['train_acc'],  color=color, lw=1, linestyle='--', alpha=0.4)
-
-        for ax, title, ylabel in zip(axes, ['Validation Loss', 'Validation Accuracy'], ['Loss', 'Accuracy']):
-            ax.set_title(title, color='#e8eaf0', fontsize=11)
-            ax.set_xlabel('Epoch', color='#6b7394', fontsize=9)
-            ax.set_ylabel(ylabel, color='#6b7394', fontsize=9)
-            ax.legend(framealpha=0, labelcolor='#9aa0bc', fontsize=9)
-
-        plt.tight_layout(pad=2)
-        st.pyplot(fig)
-        plt.close()
-
-        st.markdown("*Solid = Validation · Dashed = Train*")
-        st.divider()
-
-        st.markdown("### Individual Experiment Curves")
-        cols = st.columns(2)
-        for i, exp_name in enumerate(all_results.keys()):
-            curve_path = EXPERIMENTS_DIR / exp_name / f"{exp_name}_curve.png"
-            meta_info  = EXPERIMENT_META.get(exp_name, {})
-            with cols[i % 2]:
-                st.markdown(f"**{meta_info.get('label','?')} — {meta_info.get('name', exp_name)}**")
-                if curve_path.exists():
-                    st.image(str(curve_path), use_column_width=True)
-                else:
-                    st.markdown(
-                        "<div class='card' style='text-align:center;color:#6b7394;font-size:0.8rem;"
-                        "font-family:monospace;padding:30px;'>Curve image not found</div>",
-                        unsafe_allow_html=True
-                    )
+    st.markdown('</div>', unsafe_allow_html=True)
